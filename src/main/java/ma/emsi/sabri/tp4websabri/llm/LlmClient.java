@@ -6,76 +6,101 @@ import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.google.genai.GoogleGenAiChatModel;
+import dev.langchain4j.rag.DefaultRetrievalAugmentor;
+import dev.langchain4j.rag.content.retriever.ContentRetriever;
+import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
+import dev.langchain4j.rag.query.router.DefaultQueryRouter;
+import dev.langchain4j.rag.query.transformer.CompressingQueryTransformer;
 import dev.langchain4j.service.AiServices;
 
-import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.context.ApplicationScoped;
+
+import ma.emsi.sabri.tp4websabri.rag.RagService;
 
 import java.io.Serializable;
 
-@Dependent
+@ApplicationScoped
 public class LlmClient implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    // Rôle système choisi par l'utilisateur
     private String systemRole;
-
-    // Service IA défini par l'interface Assistant
     private Assistant assistant;
-
-    // Mémoire de la conversation
     private ChatMemory chatMemory;
 
-    /**
-     * Constructeur de LlmClient.
-     * Initialise le modèle Gemini, la mémoire et le service IA.
-     */
     public LlmClient() {
 
-        // Récupération de la clé API Gemini
+        // 1. Récupérer la clé API Gemini
         String apiKey = System.getenv("GEMINI_KEY");
 
-        // Création du modèle Gemini
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException(
+                    "Variable GEMINI_KEY introuvable");
+        }
+
+        // 2. Créer le modèle Gemini
         ChatModel model = GoogleGenAiChatModel.builder()
                 .apiKey(apiKey)
                 .modelName("gemini-3.5-flash-lite")
                 .build();
 
-        // Création de la mémoire conversationnelle
-        this.chatMemory = MessageWindowChatMemory.withMaxMessages(20);
+        // 3. Charger et indexer les deux PDF
+        RagService ragService = new RagService();
 
-        // Création du service IA avec LangChain4j
-        this.assistant = AiServices.builder(Assistant.class)
+        // 4. Retriever du premier PDF
+        ContentRetriever ragRetriever =
+                EmbeddingStoreContentRetriever.builder()
+                        .embeddingStore(ragService.getRagStore())
+                        .embeddingModel(ragService.getEmbeddingModel())
+                        .maxResults(3)
+                        .build();
+
+        // 5. Retriever du deuxième PDF
+        ContentRetriever langchainRetriever =
+                EmbeddingStoreContentRetriever.builder()
+                        .embeddingStore(ragService.getLangchainStore())
+                        .embeddingModel(ragService.getEmbeddingModel())
+                        .maxResults(3)
+                        .build();
+
+        // 6. Interroger les deux PDF
+        DefaultQueryRouter router =
+                new DefaultQueryRouter(
+                        ragRetriever,
+                        langchainRetriever
+                );
+
+        // 7. Reformuler les questions avec l'historique
+        CompressingQueryTransformer queryTransformer =
+                new CompressingQueryTransformer(model);
+
+        // 8. Construire le pipeline RAG
+        DefaultRetrievalAugmentor retrievalAugmentor =
+                DefaultRetrievalAugmentor.builder()
+                        .queryTransformer(queryTransformer)
+                        .queryRouter(router)
+                        .build();
+
+        // 9. Créer la mémoire conversationnelle
+        chatMemory = MessageWindowChatMemory.withMaxMessages(20);
+
+        // 10. Construire l'assistant avec le RAG
+        assistant = AiServices.builder(Assistant.class)
                 .chatModel(model)
                 .chatMemory(chatMemory)
+                .retrievalAugmentor(retrievalAugmentor)
                 .build();
     }
 
-    /**
-     * Définit le rôle système du LLM.
-     * Vide la mémoire avant d'ajouter le nouveau rôle.
-     *
-     * @param systemRole rôle système choisi par l'utilisateur
-     */
     public void setSystemRole(String systemRole) {
 
         this.systemRole = systemRole;
 
-        // Effacer l'ancien historique de conversation
-        this.chatMemory.clear();
-
-        // Ajouter le rôle système à la mémoire
-        this.chatMemory.add(SystemMessage.from(systemRole));
+        chatMemory.clear();
+        chatMemory.add(SystemMessage.from(systemRole));
     }
 
-    /**
-     * Envoie une question au LLM et retourne sa réponse.
-     *
-     * @param prompt question envoyée au LLM
-     * @return réponse du LLM
-     */
     public String chat(String prompt) {
-
-        return this.assistant.chat(prompt);
+        return assistant.chat(prompt);
     }
 }
