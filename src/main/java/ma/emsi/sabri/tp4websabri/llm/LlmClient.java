@@ -6,20 +6,24 @@ import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.google.genai.GoogleGenAiChatModel;
+
 import dev.langchain4j.rag.DefaultRetrievalAugmentor;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
-import dev.langchain4j.rag.query.router.DefaultQueryRouter;
+import dev.langchain4j.rag.query.router.LanguageModelQueryRouter;
 import dev.langchain4j.rag.query.transformer.CompressingQueryTransformer;
+
 import dev.langchain4j.service.AiServices;
 
-import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.Dependent;
 
 import ma.emsi.sabri.tp4websabri.rag.RagService;
 
 import java.io.Serializable;
+import java.util.HashMap;
+import java.util.Map;
 
-@ApplicationScoped
+@Dependent
 public class LlmClient implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -47,7 +51,7 @@ public class LlmClient implements Serializable {
         // 3. Charger et indexer les deux PDF
         RagService ragService = new RagService();
 
-        // 4. Retriever du premier PDF
+        // 4. Retriever du premier PDF : RAG
         ContentRetriever ragRetriever =
                 EmbeddingStoreContentRetriever.builder()
                         .embeddingStore(ragService.getRagStore())
@@ -55,7 +59,7 @@ public class LlmClient implements Serializable {
                         .maxResults(3)
                         .build();
 
-        // 5. Retriever du deuxième PDF
+        // 5. Retriever du deuxième PDF : LangChain4j
         ContentRetriever langchainRetriever =
                 EmbeddingStoreContentRetriever.builder()
                         .embeddingStore(ragService.getLangchainStore())
@@ -63,28 +67,40 @@ public class LlmClient implements Serializable {
                         .maxResults(3)
                         .build();
 
-        // 6. Interroger les deux PDF
-        DefaultQueryRouter router =
-                new DefaultQueryRouter(
-                        ragRetriever,
-                        langchainRetriever
-                );
+        // 6. Associer chaque retriever à sa description
+        Map<ContentRetriever, String> retrievers = new HashMap<>();
 
-        // 7. Reformuler les questions avec l'historique
+        retrievers.put(
+                ragRetriever,
+                "Support de cours sur le RAG, le fine-tuning, " +
+                        "les modèles de langage et les techniques de GenAI."
+        );
+
+        retrievers.put(
+                langchainRetriever,
+                "Support de cours sur LangChain4j, " +
+                        "ses composants, ses services IA et son utilisation en Java."
+        );
+
+        // 7. Gemini sélectionne le retriever pertinent
+        LanguageModelQueryRouter router =
+                new LanguageModelQueryRouter(model, retrievers);
+
+        // 8. Transformer les questions de suivi
         CompressingQueryTransformer queryTransformer =
                 new CompressingQueryTransformer(model);
 
-        // 8. Construire le pipeline RAG
+        // 9. Construire le pipeline RAG
         DefaultRetrievalAugmentor retrievalAugmentor =
                 DefaultRetrievalAugmentor.builder()
                         .queryTransformer(queryTransformer)
                         .queryRouter(router)
                         .build();
 
-        // 9. Créer la mémoire conversationnelle
+        // 10. Créer la mémoire conversationnelle
         chatMemory = MessageWindowChatMemory.withMaxMessages(20);
 
-        // 10. Construire l'assistant avec le RAG
+        // 11. Construire l'assistant avec le RAG
         assistant = AiServices.builder(Assistant.class)
                 .chatModel(model)
                 .chatMemory(chatMemory)
