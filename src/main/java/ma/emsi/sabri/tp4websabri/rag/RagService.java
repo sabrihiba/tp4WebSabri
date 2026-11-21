@@ -12,9 +12,16 @@ import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
 
-import java.io.InputStream;
+import jakarta.enterprise.context.ApplicationScoped;
 
+import java.io.InputStream;
+import java.util.logging.Logger;
+
+@ApplicationScoped
 public class RagService {
+
+    private static final Logger LOGGER =
+            Logger.getLogger(RagService.class.getName());
 
     private final EmbeddingModel embeddingModel;
     private final EmbeddingStore<TextSegment> ragStore;
@@ -22,25 +29,25 @@ public class RagService {
 
     public RagService() {
 
-        // 1. Créer le modèle d'embeddings local
+        LOGGER.info("Initialisation du service RAG");
+
         embeddingModel = new AllMiniLmL6V2EmbeddingModel();
 
-        // 2. Créer un magasin d'embeddings pour chaque PDF
         ragStore = new InMemoryEmbeddingStore<>();
         langchainStore = new InMemoryEmbeddingStore<>();
 
-        // 3. Charger et indexer les deux documents
         indexPdf("documents/rag.pdf", ragStore);
         indexPdf("documents/langchain4j.pdf", langchainStore);
+
+        LOGGER.info("Indexation des deux PDF terminée");
     }
 
     private void indexPdf(
             String resourcePath,
             EmbeddingStore<TextSegment> store) {
 
-        // Charger le PDF depuis src/main/resources
-        InputStream input = RagService.class
-                .getClassLoader()
+        InputStream input = Thread.currentThread()
+                .getContextClassLoader()
                 .getResourceAsStream(resourcePath);
 
         if (input == null) {
@@ -50,11 +57,9 @@ public class RagService {
 
         try (InputStream stream = input) {
 
-            // Extraire le texte du PDF
             DocumentParser parser = new ApacheTikaDocumentParser();
             Document document = parser.parse(stream);
 
-            // Découper, calculer les embeddings et les stocker
             EmbeddingStoreIngestor ingestor =
                     EmbeddingStoreIngestor.builder()
                             .documentSplitter(
@@ -65,8 +70,7 @@ public class RagService {
 
             ingestor.ingest(document);
 
-            System.out.println(
-                    "PDF indexé : " + resourcePath);
+            LOGGER.info("PDF indexé : " + resourcePath);
 
         } catch (Exception e) {
             throw new RuntimeException(
